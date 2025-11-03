@@ -1,0 +1,31 @@
+import sqlite3
+import pandas as pd
+
+df_silver = pd.read_csv("dados_enriquecidos.csv")
+
+conn = sqlite3.connect("pipeline.db")
+
+
+df_silver.to_sql("silver_dados_enriquecidos", conn, if_exists="replace", index=False)
+
+conn.commit()
+conn.close()
+
+print("✅ Tabela SILVER criada com sucesso!")
+
+df_jogos = pd.read_csv("desempenho_jogos.csv")
+df_dev = pd.read_csv("analise_desenvolvedores.csv")
+df_metricas = pd.read_csv("metricas_diarias.csv")
+
+
+conn = sqlite3.connect("pipeline.db")
+
+
+df_jogos.to_sql("desempenho_jogos", conn, if_exists="replace", index=False)
+df_dev.to_sql("analise_desenvolvedores", conn, if_exists="replace", index=False)
+df_metricas.to_sql("metricas_diarias", conn, if_exists="replace", index=False)
+
+conn.commit()
+
+print("✅ Banco SQLite criado e dados importados com sucesso!")
+
