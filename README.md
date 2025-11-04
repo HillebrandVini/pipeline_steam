@@ -37,7 +37,7 @@ Após o processamento nas camadas, os dados limpos e agregados são persistidos 
     - 'analise_desenvolvedores': Informações detalhadas dos desenvolvedores.
     - 'desempenho_jogos': jogos, donos estimados, avaliacoes, pico de jogadores e preço médio.
     - 'metricas_diarias': Agregações diárias.
-  ## Qualidade dos Dados (Data Quality)
+## Qualidade dos Dados (Data Quality)
 Relatório gerado pelo notebook 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/2Codigos%20e%20Notebooks/06_quality_report.ipynb' para monitorar a saúde dos dados.
 
 - *Completude (Completeness):* *96.88%* (Percentual de campos preenchidos)
