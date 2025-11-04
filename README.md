@@ -57,18 +57,5 @@ Instale as dependências via 'https://raw.githubusercontent.com/HillebrandVini/p
     - 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/2Codigos%20e%20Notebooks/04_load_database.ipynb': Carregamento dos dados nas tabelas do SQLite.
     - 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/2Codigos%20e%20Notebooks/05_sql_queries.ipynb': Exemplos de consultas analíticas ao DB.
     - 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/2Codigos%20e%20Notebooks/06_quality_report.ipynb': Geração do relatório de qualidade de dados.
-3.  **Consulte o banco de dados:** Use o código abaixo no seu ambiente Python para acessar o resultado final:
-
-import sqlite3
-import pandas as pd
-
-# Conecta ao banco de dados gerado
-conn = sqlite3.connect('Data/Gold/pipeline.db')
 
 
-query = "https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/2Codigos%20e%20Notebooks/05_sql_queries.ipynb"
-
-df_resultado = pd.read_sql_query(query, conn)
-print(df_resultado)
-
-conn.close()
