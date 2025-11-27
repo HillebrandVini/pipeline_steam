@@ -1,342 +1,296 @@
 import pandas as pd
 import os
-from datetime import datetime
-# Criar estrutura de pastas
-def bronze_layer():
-    os.makedirs('Data/Bronze', exist_ok=True)
-    os.makedirs('Data/Silver', exist_ok=True)
-    os.makedirs('Data/Gold', exist_ok=True)
+import io
+import requests
+from datetime import datetime, timedelta
+import numpy as np
 
-    # Carregar dados da fonte original
-    # SERÁ NECESSÁRIO BAIXAR O ARQUIVO .JSON, PRESENTE NO LINK DO ARQUIVO: Data\Bronze\dados_brutos_json.md
-    # Ajuste o caminho conforme necessário.
-    df_raw = pd.read_csv('../Data/Bronze/steamdb.json')
-    df_raw2 = pd.read_csv('https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/Data/Bronze/steamspy_50k_jogos.csv')
-    print(f"Dados carregados: {df_raw.shape[0]} linhas, {df_raw.shape[1]} colunas")
-    print(f"Dados carregados: {df_raw2.shape[0]} linhas, {df_raw2.shape[1]} colunas")
+# Importações do Airflow
+import pendulum
+from airflow.decorators import dag, task
+from airflow.providers.postgres.hooks.postgres import PostgresHook
 
-    # Adicionar informações de quando os dados foram carregados
-    df_raw['data_ingestao'] = datetime.now()
-    df_raw['fonte_arquivo'] = '../Data/Bronze/steamdb.json'
-    df_raw2['data_ingestao'] = datetime.now()
-    df_raw2['fonte_arquivo'] = 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/Data/Bronze/steamspy_50k_jogos.csv'
+default_args = {
+    'owner': 'airflow',
+    'retries': 3,
+    'retry_delay': timedelta(minutes=5),
+}
 
-    # Salvar na camada Bronze (sem modificar os dados originais)
-    df_raw.to_csv('../Data/Bronze/steamdb.json', index=False)
-    df_raw2.to_csv('../Data/Bronze/steamspy_50k_jogos.csv', index=False)
-    print("Dados salvos na camada Bronze")
+@dag(
+    dag_id='steam_pipeline',
+    schedule=None,
+    start_date=pendulum.today('UTC'),
+    catchup=False,
+    default_args=default_args,
+    tags=['steam', 'csv_only', 'producao']
+)
+def steam_etl_pipeline():
 
-    # Visualizar primeiras linhas
-    df_raw.head()
-    df_raw2.head()
-    
-def silver_layer():
-    df = pd.read_csv('../Data/Silver/games_dataset.csv')
-
-    # PREENCHIMENTO DE VALORES AUSENTES APENAS PARA NAO DEIXAR NULO (POUCOS VAZIOS)
-    df['published_store'] = df['published_store'].fillna('Unknown')
-    df['categories'] = df['categories'].fillna('Unknown')
-
-    # ADEQUAÇÃO DE TIPOS DE DADOS
-    df['published_store'] = pd.to_datetime(df['published_store'], format='%Y-%m-%d', errors='coerce')
-    df['categories'] = df['categories'].astype('category')
-    df['developer'] = df['developer'].astype('category')
-    df['publisher'] = df['publisher'].astype('category')
-    df['name'] = df['name'].astype(str)
-
-    # DIVISÃO DA COLUNA CATEGORIES EM DUAS NOVAS COLUNAS POR CONTA DE SER PURO TEXTO
-    df['1categoria'] = df['categories'].str.split(',').str[0]
-    df['2categoria'] = df['categories'].str.split(',').str[1]
-
-    # ADEQUAÇÃO DE TIPOS DAS NOVAS COLUNAS
-    df['1categoria'] = df['1categoria'].astype('category')
-    df['2categoria'] = df['2categoria'].astype('category')
-
-    # REMOÇÃO DA COLUNA ORIGINAL
-    df = df.drop(columns=['categories'])
-
-
-    # COMPLETUDE E UNICIDADE GERAL APENAS PARA TESTE
-    total_celulas = df.shape[0] * df.shape[1]
-    celulas_preenchidas = df.count().sum()
-    completude = (celulas_preenchidas / total_celulas) * 100
-    print(f"Completude: {completude:.2f}%")
-    duplicatas = df.duplicated().sum()
-    unicidade = ((len(df) - duplicatas) / len(df)) * 100
-    print(f"Unicidade: {unicidade:.2f}%")
-
-    # SALVAMENTO DO DATASET LIMPO
-    df.to_csv('../Data/Gold/games_dataset_cleaned.csv', index=False)
-
-def gold_layer():
-
-    # Carregar dados da camada Silver (substitua pelo caminho real do seu CSV)
-    df = pd.read_csv('../Data/Gold/games_dataset_cleaned.csv')
-
-    # ==========================================
-    # AGREGAÇÃO 1: Métricas por Data de Publicação
-    # ==========================================
-
-    metricas_diarias = df.groupby('published_store').agg({
-        'appid': 'count',          # Total de jogos lançados no dia
-        'ccu': 'sum',              # Soma de jogadores simultâneos
-        'total_reviews': 'sum',    # Total de avaliações no dia
-        'price': 'mean'            # Preço médio dos jogos lançados
-    }).reset_index()
-
-    metricas_diarias.columns = [
-        'data_lancamento',
-        'total_jogos',
-        'jogadores_simultaneos',
-        'avaliacoes_totais',
-        'preco_medio'
-    ]
-
-    metricas_diarias.to_csv(os.path.join('../Data/Gold', 'metricas_diarias.csv'), index=False)
-
-    # ==========================================
-    # AGREGAÇÃO 2: Análise por Desenvolvedor
-    # ==========================================
-
-    analise_desenvolvedores = df.groupby('developer').agg({
-        'appid': 'count',          # Quantidade de jogos lançados
-        'positive': 'sum',         # Total de avaliações positivas
-        'negative': 'sum',         # Total de avaliações negativas
-        'avg_playtime_hours': 'mean' # Tempo médio de jogo
-    }).reset_index()
-
-    analise_desenvolvedores.columns = [
-        'desenvolvedor',
-        'total_jogos',
-        'avaliacoes_positivas',
-        'avaliacoes_negativas',
-        'tempo_medio_jogado'
-    ]
-
-    analise_desenvolvedores.to_csv(os.path.join('../Data/Gold', 'analise_desenvolvedores.csv'), index=False)
-
-    # ==========================================
-    # AGREGAÇÃO 3: Desempenho dos Jogos
-    # ==========================================
-
-    desempenho_jogos = df.groupby('name').agg({
-        'owners': 'max',           # Donos (máx. por título)
-        'total_reviews': 'sum',    # Total de avaliações
-        'ccu': 'max',              # Pico de jogadores simultâneos
-        'price': 'mean'            # Preço médio atual
-    }).reset_index()
-
-    desempenho_jogos.columns = [
-        'jogo',
-        'donos_estimados',
-        'avaliacoes_totais',
-        'pico_jogadores',
-        'preco_medio'
-    ]
-
-    desempenho_jogos = desempenho_jogos.sort_values('avaliacoes_totais', ascending=False)
-    desempenho_jogos.to_csv(os.path.join('../Data/Gold', 'desempenho_jogos.csv'), index=False)
-
-    print("✅ Agregações criadas e salvas na camada Gold:")
-    print(f"- {os.path.join('../Data/Gold', 'metricas_diarias.csv')}")
-    print(f"- {os.path.join('../Data/Gold', 'analise_desenvolvedores.csv')}")
-    print(f"- {os.path.join('../Data/Gold', 'desempenho_jogos.csv')}")
-    
-def load_db():
-    import sqlite3
-    # mapeando os dados do silver pro banco de dados
-    df_silver = pd.read_csv("../Data/Gold/games_dataset_cleaned.csv")
-
-    conn = sqlite3.connect("../Data/Gold/pipeline.db")
-
-    df_silver.to_sql("silver_dados_enriquecidos", conn, if_exists="replace", index=False)
-
-    conn.commit()
-    conn.close()
+    @task
+    def bronze_layer():
+        """
+        [1. CAMADA BRONZE]
+        Lê steamdb.csv (Local Obrigatório) e steamspy (Local ou Remoto).
+        """
+        print("Iniciando Camada Bronze...")
         
-    #mapeando os dados gold pro banco de dados
-    df_jogos = pd.read_csv("../Data/Gold/desempenho_jogos.csv")
-    df_dev = pd.read_csv("../Data/Gold/analise_desenvolvedores.csv")
-    df_metricas = pd.read_csv("../Data/Gold/metricas_diarias.csv")
+        # Caminhos
+        path_base = '/opt/airflow/data'
+        path_bronze = f'{path_base}/Bronze'
+        os.makedirs(path_bronze, exist_ok=True)
+        os.makedirs(f'{path_base}/Silver', exist_ok=True)
+        os.makedirs(f'{path_base}/Gold', exist_ok=True)
 
+        # --- PARTE A: STEAMDB (Local Obrigatório) ---
+        try:
+            print("Lendo steamdb.csv (Local)...")
+            df_local = pd.read_csv(f'{path_base}/steamdb.csv', low_memory=False) 
+        except FileNotFoundError:
+            raise FileNotFoundError("ERRO CRÍTICO: O arquivo 'steamdb.csv' não foi encontrado em /opt/airflow/data/. A leitura de 'steam_reviews.csv' foi removida.")
 
-    conn = sqlite3.connect("../Data/Gold/pipeline.db")
+        # --- PARTE B: STEAMSPY (Híbrido: Local ou Remoto) ---
+        local_spy_path = f'{path_base}/steamspy_50k_jogos.csv'
+        df_remote = None
 
-
-    df_jogos.to_sql("desempenho_jogos", conn, if_exists="replace", index=False)
-    df_dev.to_sql("analise_desenvolvedores", conn, if_exists="replace", index=False)
-    df_metricas.to_sql("metricas_diarias", conn, if_exists="replace", index=False)
-
-    conn.commit()
-    
-    # verficando as tabelas
-    conn = sqlite3.connect("../Data/Gold/pipeline.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-    tabelas = cursor.fetchall()
-    print("\nTabelas no banco de dados:")
-    for tabela in tabelas:
-        print(f" - {tabela[0]}")
-    conn.close()
-
-def sql_query():
-    import sqlite3
-
-    conn = sqlite3.connect("../Data/Gold/pipeline.db")
-
-    def run(sql):
-        return pd.read_sql_query(sql, conn)
-    #criando as queries iniciais
-
-    # 1 - Total de jogos
-    query_total_jogos = """
-    SELECT COUNT(*) AS total_jogos
-    FROM desempenho_jogos;
-    """
-
-    # 2 - Top 10 jogos por pico de jogadores
-    query_top_jogos = """
-    SELECT jogo, pico_jogadores
-    FROM desempenho_jogos
-    ORDER BY pico_jogadores DESC
-    LIMIT 10;
-    """
-
-    # 3 - Preço médio dos jogos
-    query_preco_medio = """
-    SELECT AVG(preco_medio) AS preco_medio
-    FROM desempenho_jogos;
-    """
-
-    # 4 - Evolução histórica de players
-    query_evolucao = """
-    SELECT data_lancamento, jogadores_simultaneos
-    FROM metricas_diarias
-    ORDER BY data_lancamento;
-    """
-
-    # ===== Executar =====
-    total_jogos = run(query_total_jogos)
-    top_jogos = run(query_top_jogos)
-    preco_medio = run(query_preco_medio)
-    evolucao_players = run(query_evolucao)
-
-    conn.close()
-
-    print("\n Total de jogos:")
-    print(total_jogos)
-
-    print("\n Top 10 jogos por pico:")
-    print(top_jogos)
-
-    print("\n Preço médio dos jogos:")
-    print(preco_medio)
-
-    print("\n Evolução de jogadores (primeiras linhas):")
-    print(evolucao_players.head())
-
-def quality_report():
-    import pandas as pd
-    import numpy as np
-
-    caminho = '../Data/Gold/games_dataset_cleaned.csv'
-
-    def a(file_path):
-
-        df = pd.read_csv(file_path)
-
-        print("="*60)
-        print("      RELATÓRIO DE QUALIDADE DE DADOS     ")
-        print("="*60)
-        
-        # ==========================================
-        # 1. COMPLETUDE
-        # ==========================================
-        print("\n1. COMPLETUDE DOS DADOS")
-        print("-" * 60)
-        
-        total_celulas = np.prod(df.shape)
-        celulas_ausentes = df.isnull().sum().sum()
-        celulas_preenchidas = total_celulas - celulas_ausentes
-        completude_geral = (celulas_preenchidas / total_celulas) * 100
-        
-        print(f"Dimensões do DataFrame: {df.shape[0]} linhas x {df.shape[1]} colunas")
-        print(f"Células Totais: {total_celulas:,}")
-        print(f"Células Ausentes: {celulas_ausentes:,}")
-        print(f"Completude Geral: {completude_geral:.2f}%")
-
-        print("\nCompletude por coluna (Top 5 colunas com mais dados ausentes):")
-        completude_colunas = (df.isnull().sum() / len(df) * 100).sort_values(ascending=False)
-        completude_colunas_ausentes = completude_colunas[completude_colunas > 0]
-        
-        if completude_colunas_ausentes.empty:
-            print("Nenhuma coluna com dados ausentes. Perfeito!")
+        # 1. Tenta ler localmente para evitar erro 429
+        if os.path.exists(local_spy_path):
+            print(f"SUCESSO: Arquivo local '{local_spy_path}' encontrado! Pulando download.")
+            df_remote = pd.read_csv(local_spy_path, low_memory=False)
         else:
-            missing_df = pd.DataFrame({
-                'Coluna': completude_colunas_ausentes.index,
-                '% Ausente': completude_colunas_ausentes.values,
-                'Completude': (100 - completude_colunas_ausentes.values)
-            })
+            # 2. Se não tem local, tenta baixar
+            print("Arquivo local não encontrado. Iniciando download do GitHub...")
+            url = 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/Data/Bronze/steamspy_50k_jogos.csv'
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            
+            try:
+                response = requests.get(url, headers=headers)
+                response.raise_for_status()
+                df_remote = pd.read_csv(io.StringIO(response.text), low_memory=False)
+                print("Download concluído com sucesso.")
 
-        # ==========================================
-        # 2. UNICIDADE
-        # ==========================================
-        print("\n2. UNICIDADE DOS DADOS")
-        print("-" * 60)
-        
-        duplicatas_linhas = df.duplicated().sum()
-        unicidade_linhas = ((len(df) - duplicatas_linhas) / len(df)) * 100
-        
-        duplicatas_appid = df.duplicated(subset=['appid']).sum()
-        unicidade_appid = ((len(df) - duplicatas_appid) / len(df)) * 100
-        
-        print(f"Duplicatas de LINHAS INTEIRAS: {duplicatas_linhas} (Unicidade: {unicidade_linhas:.2f}%)")
-        print(f"Duplicatas de 'appid' (Chave): {duplicatas_appid} (Unicidade: {unicidade_appid:.2f}%)")
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429:
+                    raise Exception("ERRO 429: GitHub bloqueou por excesso de tentativas. Aguarde ou faça upload manual do arquivo 'steamspy_50k_jogos.csv'.")
+                raise Exception(f"Erro no Download: {e}")
 
-        # ==========================================
-        # 3. CONSISTÊNCIA
-        # ==========================================
-        print("\n3. CONSISTÊNCIA INTERNA DOS DADOS")
-        print("-" * 60)
-        
-        if all(col in df.columns for col in ['total_reviews', 'positive', 'negative']):
-            inconsistencias_reviews = (df['total_reviews'] != (df['positive'] + df['negative'])).sum()
-            print(f"Linhas onde 'total_reviews' != ('positive' + 'negative'): {inconsistencias_reviews}")
+        # --- Processamento Final Bronze ---
+        df_local['data_ingestao'] = datetime.now()
+        df_remote['data_ingestao'] = datetime.now()
+
+        df_local.to_csv(f'{path_bronze}/bronze_steamdb_ingested.csv', index=False)
+        df_remote.to_csv(f'{path_bronze}/bronze_steamspy_ingested.csv', index=False)
+        print("Arquivos salvos na camada Bronze.")
+
+
+    @task
+    def prepare_silver():
+        """[2. PREPARAÇÃO]"""
+        try:
+            df_steamdb = pd.read_csv('/opt/airflow/data/Bronze/bronze_steamdb_ingested.csv', low_memory=False)
+            df_steamspy = pd.read_csv('/opt/airflow/data/Bronze/bronze_steamspy_ingested.csv', low_memory=False)
+        except FileNotFoundError as e:
+            raise Exception(f"Arquivos Bronze ausentes: {e}")
+
+        col_db = 'sid' if 'sid' in df_steamdb.columns else 'appid'
+        col_spy = 'appid'
+
+        print(f"Merge: {col_db} (Local) + {col_spy} (Remoto)")
+
+        df_merged = pd.merge(
+            df_steamdb, 
+            df_steamspy, 
+            left_on=col_db,    
+            right_on=col_spy,  
+            how='inner', 
+            suffixes=('_steamdb', '_steamspy')
+        )
+
+        if df_merged.empty:
+            raise ValueError("O Merge gerou tabela vazia! Verifique os IDs.")
+
+        df_merged.to_csv('/opt/airflow/data/Silver/games_dataset.csv', index=False)
+        print(f"Merge OK: {df_merged.shape[0]} linhas.")
+
+
+    @task
+    def silver_layer():
+        """[3. LIMPEZA SILVER]"""
+        print("Limpando dados...")
+        df = pd.read_csv('/opt/airflow/data/Silver/games_dataset.csv', low_memory=False)
+
+        # Resolução de Nomes
+        if 'name' not in df.columns:
+            if 'name_steamdb' in df.columns:
+                df['name'] = df['name_steamdb'].fillna(df['name_steamspy'] if 'name_steamspy' in df.columns else 'Unknown')
+            elif 'name_steamspy' in df.columns:
+                df['name'] = df['name_steamspy']
+            elif 'app_name' in df.columns:
+                df = df.rename(columns={'app_name': 'name'})
+            else:
+                df['name'] = 'Unknown Game'
+
+        # Resolução Developer/Publisher
+        for col in ['developer', 'publisher']:
+            col_db, col_spy = f"{col}_steamdb", f"{col}_steamspy"
+            if col not in df.columns:
+                if col_spy in df.columns:
+                    df[col] = df[col_spy].fillna(df[col_db] if col_db in df.columns else 'Unknown')
+                elif col_db in df.columns:
+                    df[col] = df[col_db]
+                else:
+                    df[col] = 'Unknown'
+
+        # Resolução Preço
+        if 'price' not in df.columns:
+            if 'price_steamspy' in df.columns:
+                df['price'] = df['price_steamspy']
+            elif 'price_steamdb' in df.columns:
+                df['price'] = df['price_steamdb']
+            else:
+                df['price'] = 0
+
+        # Data de Lançamento
+        found_date = False
+        if 'published_store' not in df.columns:
+            for col in ['release_date', 'date', 'published_store', 'release_date_steamspy']:
+                if col in df.columns:
+                    df['published_store'] = df[col]
+                    found_date = True
+                    break
+            if not found_date:
+                df['published_store'] = 'Unknown'
+
+        # Total Reviews
+        if 'positive' in df.columns and 'negative' in df.columns:
+            df['positive'] = pd.to_numeric(df['positive'], errors='coerce').fillna(0)
+            df['negative'] = pd.to_numeric(df['negative'], errors='coerce').fillna(0)
+            df['total_reviews'] = df['positive'] + df['negative']
         else:
-            print("Colunas de review não encontradas para checagem de consistência.")
+            pos = df['positive_steamspy'] if 'positive_steamspy' in df.columns else 0
+            neg = df['negative_steamspy'] if 'negative_steamspy' in df.columns else 0
+            df['total_reviews'] = pd.to_numeric(pos, errors='coerce') + pd.to_numeric(neg, errors='coerce')
+            df['positive'] = pos
+            df['negative'] = neg
 
-        # ==========================================
-        # 4. VALIDADE
-        # ==========================================
-        print("\n4. VALIDADE DOS DADOS (Ranges)")
-        print("-" * 60)
-        
-        if 'price' in df.columns:
-            precos_invalidos = (df['price'] < 0).sum()
-            print(f"Registros com 'price' negativo: {precos_invalidos}")
-        
-        if 'discount' in df.columns:
-            descontos_invalidos = ((df['discount'] < 0) | (df['discount'] > 100)).sum()
-            print(f"Registros com 'discount' fora do range [0, 100]: {descontos_invalidos}")
-        # ==========================================
-        # SCORE FINAL
-        # ==========================================
-        print("\n" + "="*60)
-        print("      SCORE GERAL DE QUALIDADE DE DADOS     ")
-        print("="*60)
-        
-        score_final = (completude_geral + unicidade_appid) / 2
-        
-        print(f"Completude Geral: {completude_geral:.2f}%")
-        print(f"Unicidade (appid): {unicidade_appid:.2f}%")
-        print(f"Score Final: {score_final:.2f}%")
+        # Playtime
+        if 'average_forever' in df.columns and 'avg_playtime_hours' not in df.columns:
+             df = df.rename(columns={'average_forever': 'avg_playtime_hours'})
+        elif 'average_2weeks' in df.columns and 'avg_playtime_hours' not in df.columns:
+             df['avg_playtime_hours'] = df['average_2weeks']
 
-        if score_final >= 90:
-            print("Classificação: EXCELENTE")
-        elif score_final >= 80:
-            print("Classificação: BOM")
-        elif score_final >= 70:
-            print("Classificação: REGULAR")
+        # Remover duplicadas de colunas
+        df = df.loc[:, ~df.columns.duplicated()]
+
+        # Tipagem Final
+        df['published_store'] = pd.to_datetime(df['published_store'], format='%Y-%m-%d', errors='coerce')
+        df['developer'] = df['developer'].fillna('Unknown').astype(str)
+        df['name'] = df['name'].fillna('Unknown').astype(str)
+        
+        # Categorias
+        col_cat = next((c for c in ['tags', 'genres', 'categories'] if c in df.columns), None)
+        if col_cat:
+            df[col_cat] = df[col_cat].fillna('Unknown').astype(str)
+            df['1categoria'] = df[col_cat].str.split(',').str[0]
+            df['2categoria'] = df[col_cat].str.split(',').str[1]
         else:
-            print("Classificação: NECESSITA MELHORIAS")
-    a(caminho)
+            df['1categoria'] = 'Unknown'; df['2categoria'] = 'Unknown'
+
+        # Garantir Numéricos
+        for col in ['price', 'ccu', 'avg_playtime_hours', 'owners']:
+            target = col if col in df.columns else f"{col}_steamspy"
+            if target in df.columns:
+                df[col] = pd.to_numeric(df[target], errors='coerce').fillna(0)
+            else:
+                df[col] = 0
+
+        df.to_csv('/opt/airflow/data/Gold/games_dataset_cleaned.csv', index=False)
+        print("Camada Silver OK.")
+
+
+    @task
+    def gold_layer():
+        """[4. CAMADA GOLD]"""
+        print("Gerando KPIs...")
+        df = pd.read_csv('/opt/airflow/data/Gold/games_dataset_cleaned.csv', low_memory=False)
+        
+        if 'published_store' in df.columns:
+            metricas = df.groupby('published_store').agg({
+                'name': 'count', 'ccu': 'sum', 'total_reviews': 'sum', 'price': 'mean'
+            }).reset_index()
+            metricas.columns = ['data_lancamento', 'total_jogos', 'jogadores_simultaneos', 'avaliacoes_totais', 'preco_medio']
+            metricas.to_csv('/opt/airflow/data/Gold/metricas_diarias.csv', index=False)
+
+        analise = df.groupby('developer').agg({
+            'name': 'count', 'positive': 'sum', 'negative': 'sum', 'avg_playtime_hours': 'mean'
+        }).reset_index()
+        analise.columns = ['desenvolvedor', 'total_jogos', 'avaliacoes_positivas', 'avaliacoes_negativas', 'tempo_medio_jogado']
+        analise.to_csv('/opt/airflow/data/Gold/analise_desenvolvedores.csv', index=False)
+
+        try:
+            desempenho = df.groupby('name').agg({
+                'total_reviews': 'sum', 'ccu': 'max', 'price': 'mean'
+            }).reset_index()
+            desempenho.columns = ['jogo', 'avaliacoes_totais', 'pico_jogadores', 'preco_medio']
+            desempenho = desempenho.sort_values('avaliacoes_totais', ascending=False)
+            desempenho.to_csv('/opt/airflow/data/Gold/desempenho_jogos.csv', index=False)
+        except Exception: pass
+        print("Camada Gold OK.")
+
+
+    @task
+    def quality_report():
+        """[5. RELATÓRIO]"""
+        try:
+            df = pd.read_csv('/opt/airflow/data/Gold/games_dataset_cleaned.csv')
+            total = np.prod(df.shape)
+            ausentes = df.isnull().sum().sum()
+            print(f"Completude: {((total - ausentes) / total) * 100:.2f}%")
+            
+            col_unicidade = 'appid' if 'appid' in df.columns else 'name'
+            dup = df.duplicated(subset=[col_unicidade]).sum()
+            unicidade = ((len(df) - dup) / len(df)) * 100
+            print(f"Unicidade ({col_unicidade}): {unicidade:.2f}%")
+        except Exception: pass
+
+
+    @task
+    def load_db():
+        """[6. CARGA DB]"""
+        print("Carregando Postgres...")
+        try:
+            hook = PostgresHook(postgres_conn_id='postgres_dados_steam')
+            engine = hook.get_sqlalchemy_engine()
+            
+            with engine.connect() as conn:
+                pd.read_csv("/opt/airflow/data/Gold/games_dataset_cleaned.csv").to_sql("silver_dados_enriquecidos", conn, if_exists="replace", index=False, chunksize=1000)
+                pd.read_csv("/opt/airflow/data/Gold/desempenho_jogos.csv").to_sql("desempenho_jogos", conn, if_exists="replace", index=False)
+                pd.read_csv("/opt/airflow/data/Gold/analise_desenvolvedores.csv").to_sql("analise_desenvolvedores", conn, if_exists="replace", index=False)
+                pd.read_csv("/opt/airflow/data/Gold/metricas_diarias.csv").to_sql("metricas_diarias", conn, if_exists="replace", index=False)
+            print("Carga OK.")       
+        except Exception as e:
+            print(f"ERRO BANCO: {e}")
+            raise
+
+    @task
+    def sql_query():
+        try:
+            hook = PostgresHook(postgres_conn_id='postgres_dados_steam')
+            with hook.get_sqlalchemy_engine().connect() as conn:
+                res = pd.read_sql("SELECT COUNT(*) FROM desempenho_jogos;", conn)
+                print(f"Jogos no DB: {res.iloc[0,0]}")
+        except Exception: pass
+
+    # Orquestração
+    t1 = bronze_layer()
+    t2 = prepare_silver()
+    t3 = silver_layer()
+    t4 = gold_layer()
+    t5 = quality_report()
+    t6 = load_db()
+    t7 = sql_query()
+
+    t1 >> t2 >> t3 >> t4 >> t5 >> t6 >> t7
+
+steam_etl_pipeline()
