@@ -3,8 +3,6 @@
 ## Descrição do Projeto
 Este projeto implementa um pipeline ETL (Extract, Transform, Load) automatizado via **Apache Airflow** para processar dados da plataforma Steam. O objetivo técnico é estruturar dados brutos em um Data Lakehouse (Bronze, Silver, Gold) e carregá-los em um banco **PostgreSQL**.
 
-Do ponto de vista de negócio, o projeto visa monitorar o desempenho de vendas, o comportamento de compra e fornecer insumos para uma **análise de saúde pública**, focada no tempo que jovens e adolescentes dedicam aos jogos digitais.
-
 ## Arquitetura do Pipeline
 O pipeline segue a arquitetura de **Medallion Architecture** (Camadas Delta), orquestrada pelo DAG `steam_pipeline` no Airflow.
 
