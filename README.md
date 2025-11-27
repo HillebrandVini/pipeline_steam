@@ -1,61 +1,116 @@
-## Pipeline de Dados - Steam Data Insight: Da Compra ao Comportamento
+Pipeline de Dados - Steam Data Insight (Airflow Edition)
+📌 Descrição do Projeto
+Este projeto implementa um pipeline ETL (Extract, Transform, Load) automatizado via Apache Airflow para processar dados da plataforma Steam. O objetivo técnico é estruturar dados brutos em um Data Lakehouse (Bronze, Silver, Gold) e carregá-los em um banco PostgreSQL.
 
-## Descrição
-Este projeto implementa um pipeline de dados ETL (Extract, Transform, Load) para processar e estruturar dados brutos, tornando-os prontos para análise e consumo por ferramentas de BI e aplicações. 
-O principal objetivo é monitorar o desempenho de vendas diárias e o comportamento de compra dos clientes. Pensando tambem em fazer uma analise de saude publica, onde sera analisado o tempo que jovens e adolescentes passam em jogos.
-## Estrutura de Dados (Data Lakehouse)
-O pipeline segue a arquitetura de *Camadas Delta (Bronze, Silver, Gold)* para garantir a qualidade, rastreabilidade e usabilidade dos dados.
+Do ponto de vista de negócio, o projeto visa monitorar o desempenho de vendas, o comportamento de compra e fornecer insumos para uma análise de saúde pública, focada no tempo que jovens e adolescentes dedicam aos jogos digitais.
 
-### Camada Bronze (Raw Data)
-- *Localização:* 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/Data/Bronze/steamspy_50k_jogos.csv'
-- *Localizaçao 2:* 'https://drive.google.com/file/d/1WLH_0mV1glBpYLbxW7L6FbUkhsA1XLlV/view?usp=sharing'
-- *Descrição:* Contém os dados brutos, extraídos diretamente da fonte, sem qualquer alteração. Serve como um histórico imutável.
-- *Fonte:* Exportação de um sistema de API ('https://steamspy.com/api.php') e repositório do GITHUB ('https://github.com/leinstay/steamdb/blob/main/steamdb.json').
-### Camada Silver (Cleaned & Conformed Data)
-- *Localização:* 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/Data/Silver/games_dataset.csv'
-- *Descrição:* Dados limpos, validados, estruturados e prontos para análises mais detalhadas.
-- *Transformações aplicadas:*
-    1. *Remoção de duplicatas:* Eliminação de registros redundantes.
-    2. *Tratamento de valores nulos:* Preenchimento de nulos ou remoção de linhas.
-    3. *Conversão de tipos:* Garantia de que as colunas estão com o tipo de dado correto.
-    4. *Padronização de valores:* Unificação de formatos de texto.
-    5. *Unificação de colunas:* Identificação e tratamento de colunas para evitar distorções na análise.
- ### Camada Gold (Aggregated & Curated Data)
-- *Localização:* 'https://github.com/HillebrandVini/pipeline_steam/tree/main/Data/Gold'
-- *Descrição:* Dados altamente agregados, sumarizados e otimizados para consumo direto (BI, relatórios e Machine Learning).
-- *Arquivos:*  'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/Data/Gold/games_dataset_cleaned.csv'
-    - 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/Data/Gold/metricas_diarias.csv': KPIs e métricas resumidas por dia.
-    - 'https://github.com/HillebrandVini/pipeline_steam/blob/main/Data/Gold/analise_desenvolvedores.csv': Informações consolidadas de performance por desenvolvedor.
-    - 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/Data/Gold/desempenho_jogos.csv': Métricas de performance de jogos.
- ## Banco de Dados (Load)
-Após o processamento nas camadas, os dados limpos e agregados são persistidos em um banco de dados local para facilitar o acesso e a consulta.
+🏗️ Arquitetura do Pipeline
+O pipeline segue a arquitetura de Medallion Architecture (Camadas Delta), orquestrada pelo DAG steam_pipeline no Airflow.
 
-- *Tipo:* SQLite
-- *Localização:* 'https://github.com/HillebrandVini/pipeline_steam/raw/refs/heads/main/Data/Gold/pipeline.db'
-- *Tabelas:*
-    - 'silver_dados_enriquecidos': Dados completos e limpos da Camada Silver.
-    - 'analise_desenvolvedores': Informações detalhadas dos desenvolvedores.
-    - 'desempenho_jogos': jogos, donos estimados, avaliacoes, pico de jogadores e preço médio.
-    - 'metricas_diarias': Agregações diárias.
-## Qualidade dos Dados (Data Quality)
-Relatório gerado pelo notebook 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/2Codigos%20e%20Notebooks/06_quality_report.ipynb' para monitorar a saúde dos dados.
+1. Camada Bronze (Raw Data)
+Dados brutos com adição de metadados de ingestão.
 
-- *Completude (Completeness):* *96.88%* (Percentual de campos preenchidos)
-- *Unicidade (Uniqueness):* *100.00%* (Percentual de registros não duplicados)
-- *Score Geral:* *98.44%* (Média ou score ponderado de todas as dimensões de qualidade)
+Fonte 1 (Obrigatória): steamdb.csv (Arquivo local, ingerido manualmente na pasta de dados).
 
-> *Nota:* Esses valores são calculados ao final da execução do pipeline, garantindo que as transformações da Camada Silver foram eficazes.
-## Como Executar
-Siga os passos abaixo para replicar o ambiente e executar o pipeline completo:
+Fonte 2 (Híbrida): steamspy_50k_jogos.csv (Busca localmente; se não encontrar, baixa automaticamente do GitHub para evitar bloqueios de API).
 
-1.  **Pré-requisitos:** Certifique-se de ter Python instalado e as bibliotecas necessárias (ex: pandas, sqlite3, jupyter). 
-Instale as dependências via 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/requirements.txt'.
-2.  **Execute os notebooks** na ordem cronológica para processar os dados e carregar o banco:
-    - 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/2Codigos%20e%20Notebooks/01_bronze_layer.ipynb': Extração e carga inicial.
-    - 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/2Codigos%20e%20Notebooks/02_silver_layer.ipynb': Limpeza e validação dos dados.
-    - 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/2Codigos%20e%20Notebooks/03_gold_layer.ipynb': Agregação e sumarização.
-    - 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/2Codigos%20e%20Notebooks/04_load_database.ipynb': Carregamento dos dados nas tabelas do SQLite.
-    - 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/2Codigos%20e%20Notebooks/05_sql_queries.ipynb': Exemplos de consultas analíticas ao DB.
-    - 'https://raw.githubusercontent.com/HillebrandVini/pipeline_steam/refs/heads/main/2Codigos%20e%20Notebooks/06_quality_report.ipynb': Geração do relatório de qualidade de dados.
+Saída: Bronze/bronze_steamdb_ingested.csv e Bronze/bronze_steamspy_ingested.csv.
 
+2. Camada Silver (Cleaned & Enriched)
+Dados unificados, limpos e tipados.
 
+Processamento:
+
+Merge Inteligente: Inner Join entre SteamDB (sid ou appid) e SteamSpy (appid).
+
+Tratamento de Nulos: Preenchimento de 'Unknown' para desenvolvedores e nomes.
+
+Padronização de Datas: Conversão para datetime (Default: 2000-01-01 para datas ausentes).
+
+Cálculo de Reviews: Soma de reviews positivas e negativas.
+
+Sanitização: Remoção de colunas duplicadas e garantia de tipos numéricos (preço, ccu, horas jogadas).
+
+Saída: Silver/games_dataset.csv.
+
+3. Camada Gold (Aggregated & Analytics)
+Dados sumarizados prontos para BI e modelos de ML.
+
+metricas_diarias.csv: Agregação por data de lançamento (Total de jogos, soma de CCU, preço médio).
+
+analise_desenvolvedores.csv: Performance por desenvolvedor (Total de jogos, reviews, tempo médio de jogo).
+
+desempenho_jogos.csv: Ranking de jogos por avaliações, pico de jogadores e preço.
+
+games_dataset_cleaned.csv: Dataset analítico completo.
+
+💾 Banco de Dados (Load)
+Diferente da versão anterior (SQLite), esta versão carrega os dados processados em um banco de dados PostgreSQL rodando em container.
+
+Tabelas Criadas: silver_dados_enriquecidos, analise_desenvolvedores, desempenho_jogos, metricas_diarias.
+
+Método: PostgresHook com SQLAlchemy (Substituição total das tabelas a cada execução).
+
+✅ Qualidade dos Dados (Data Quality)
+Uma tarefa dedicada (quality_report) executa validações ao final do processamento e exibe os resultados nos logs do Airflow:
+
+Completude: % de células preenchidas na base final.
+
+Unicidade: % de registros únicos baseados no ID do jogo.
+
+Integridade: Verificação se o merge gerou dados vazios (o pipeline falha preventivamente se isso ocorrer).
+
+🚀 Como Executar (Docker + Airflow)
+Pré-requisitos
+Docker e Docker Compose instalados.
+
+Arquivo steamdb.csv baixado localmente.
+
+Passo a Passo
+Prepare o Ambiente: Certifique-se de que sua estrutura de pastas local esteja assim (mapeada no docker-compose.yaml):
+
+Plaintext
+
+/seu-projeto
+├── dags/
+│   └── steam_pipeline_csv_only_3.py
+├── data/
+│   └── steamdb.csv  <-- COLOQUE ESTE ARQUIVO AQUI
+└── docker-compose.yaml
+Suba os Containers:
+
+Bash
+
+docker-compose up -d
+Configure a Conexão no Airflow:
+
+Acesse http://localhost:8080.
+
+Vá em Admin > Connections.
+
+Crie uma conexão com ID: postgres_dados_steam.
+
+Tipo: Postgres.
+
+Preencha Host, Login, Senha e Schema conforme seu docker-compose.
+
+Execute o Pipeline:
+
+Na home do Airflow, ative a DAG steam_pipeline.
+
+Clique no botão Trigger DAG (▶️).
+
+Acompanhe a execução na aba Graph.
+
+🛠 Tecnologias Utilizadas
+Linguagem: Python 3.9+
+
+Orquestração: Apache Airflow 2.x
+
+Containerização: Docker
+
+Manipulação de Dados: Pandas / NumPy
+
+Banco de Dados: PostgreSQL
+
+Ingestão: Requests (HTTP) & Leitura de Arquivos Locais
